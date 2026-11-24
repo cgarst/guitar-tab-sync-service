@@ -31,7 +31,7 @@ PUBLIC_BASE_URL=http://localhost:8080
 # GPYTSYNC_VERSION=latest   (used only when GPYTSYNC_BRANCH is empty)
 # STEMDECK_VERSION=0.21.0
 
-# Use another upstream repo, and/or track one of its branches instead of a release (overrides GPYTSYNC_VERSION;
+# Use another tab and audio downloader repo, and/or track one of its branches instead of a release (overrides GPYTSYNC_VERSION;
 # each start installs the branch's newest commit).
 # GPYTSYNC_REPO=cgarst/guitar-pro-youtube-sync
 # GPYTSYNC_BRANCH=raw-flag
@@ -82,7 +82,7 @@ open http://localhost:8080
 | `DELETE` | `/api/job?id=<id>` | Delete a finished or failed job and its files (`409` while it runs). |
 | `GET` | `/api/job/file?id=<id>` | Download a finished job's main file. Add `name=<file>` for another file. |
 | `GET` | `/openapi.json` | OpenAPI 3.1 description of this API (needs no token). |
-| `GET` | `/healthz` | Check that the service is alive. Reports the upstream release and whether stems are on. |
+| `GET` | `/healthz` | Check that the service is alive. Reports the tab and audio downloader release and whether stems are on. |
 
 ```sh
 curl -X POST -d song=23063 localhost:8080/api/jobs
@@ -99,7 +99,7 @@ curl -OJ localhost:8080/api/job/file?id=23063-ab12cd
 
 - `song`: a song ID, a song page URL, or search text. You can send it as `q` instead.
 - `force`: send `force=1` to run the job again when the same song is already queued, running, or done. A
-  finished job is also run again, without `force`, when an older version of the service or of upstream made it.
+  finished job is also run again, without `force`, when an older version of the service or of the tab and audio downloader made it.
 - `first`: send `first=1` to take the first search result without asking. The job then reports `matched`: the query
   and the artist and title it resolved to.
 

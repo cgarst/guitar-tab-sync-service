@@ -1,7 +1,7 @@
 """Where songs come from. A source knows how to read a song ID out of what a person typed, how to search for songs, and what
 a song's page is called. There is one source today; a new one is another `Source` in `SOURCES`.
 
-The first source's host is not written down here. It is read from the upstream release, which is the code that fetches
+The first source's host is not written down here. It is read from the tab and audio downloader release, which is the code that fetches
 the tab and the bar times from it, so the two always agree. `SOURCE_URL` overrides it; only the tests use that.
 """
 import json
@@ -15,7 +15,7 @@ UPSTREAM = Path(os.environ.get("UPSTREAM_DIR", "/opt/upstream"))
 
 
 def upstream_base(upstream_dir=None):
-    """The `https://host` upstream's sync.py fetches song metadata from, or None when it cannot be found."""
+    """The `https://host` the downloader's sync.py fetches song metadata from, or None when it cannot be found."""
     try:
         text = (Path(upstream_dir or UPSTREAM) / "sync.py").read_text(errors="replace")
     except OSError:
@@ -38,7 +38,7 @@ class Source:
         if callable(self._base):
             self._base = self._base()
         if not self._base:
-            raise SourceError(f"The {self.label} address could not be found in the upstream release.")
+            raise SourceError(f"The {self.label} address could not be found in the tab and audio downloader.")
         return self._base.rstrip("/")
 
     def parse(self, raw):

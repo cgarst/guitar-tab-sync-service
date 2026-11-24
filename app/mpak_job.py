@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Runs one MPAK job: `mpak_job.py --song <id>` in the job's output directory. Started by gpsync.py with the
-upstream venv's Python (it needs yt-dlp and requests).
+the downloader venv's Python (it needs yt-dlp and requests).
 
 Unlike sync.py, which writes a single *_synced.gp with the audio embedded, this keeps the pieces apart:
-the plain tab, the untrimmed YouTube audio and the source's own bar times. It runs upstream's `sync.py --raw`
+the plain tab, the untrimmed YouTube audio and the source's own bar times. It runs the downloader's `sync.py --raw`
 (needs a release that has the flag) and imports its other functions rather than re-implementing them.
 
 It makes every output that applies: the Guitar Pro file, a pack of the full band and the source's backing video (two
@@ -61,7 +61,7 @@ RETRY_PAUSE = float(os.environ.get("GPSYNC_RETRY_PAUSE", "8"))  # seconds, times
 
 
 def download_audio(sync, video_id, path):
-    """Upstream's download, tried up to DOWNLOAD_ATTEMPTS times: YouTube now and then answers a media request with HTTP 403 and
+    """The downloader's download, tried up to DOWNLOAD_ATTEMPTS times: YouTube now and then answers a media request with HTTP 403 and
     the same request works a moment later. Raises the last error."""
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
         try:
@@ -78,18 +78,22 @@ def download_audio(sync, video_id, path):
 
 
 def run_upstream_raw(song_id, work):
-    """Run `sync.py --song <id> --raw` in `work`, retried like download_audio, with its output shown live. Upstream names its files
+    """Run `sync.py --song <id> --raw` in `work`, retried like download_audio, with its output shown live. It names its files
     after the song, so they are found by the sync JSON it writes. Returns (tab, raw audio, synced gp) as Paths and the parsed sync
-    JSON (artist, title, revision, bar times). Upstream carries on without audio when a download fails, so the file is checked."""
+    JSON (artist, title, revision, bar times). It carries on without audio when a download fails, so the file is checked."""
     cmd = [sys.executable, str(UPSTREAM / "sync.py"), "--song", str(song_id), "--raw"]
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
         for f in (*work.glob("*.gp"), *work.glob("*_raw.mp3"), *work.glob("*_sync.json"), *work.glob(".tmp_audio.mp3")):
             f.unlink()
         p = subprocess.Popen(cmd, cwd=work, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        seen = []
         for line in p.stdout:
-            # Upstream's own "[n/5]" headings would be read as this job's progress, so they are shown with parentheses.
+            seen.append(line)
+            # The downloader's own "[n/5]" headings would be read as this job's progress, so they are shown with parentheses.
             print("  | " + re.sub(r"\[(\d)/(\d)\]", r"(\1/\2)", line.rstrip("\n")), flush=True)
         p.wait()
+        # The downloader carries on without audio when YouTube refuses, so the reason is in its output, not in its exit code.
+        why = next((m.group(1) for l in reversed(seen) if (m := re.search(r"Audio download failed: (?:ERROR: )?(.*)", l))), None)
         found = sorted(work.glob("*_sync.json"))
         if p.returncode == 0 and len(found) == 1:
             base = found[0].name[:-len("_sync.json")]
@@ -97,8 +101,9 @@ def run_upstream_raw(song_id, work):
             if tab.is_file() and raw.is_file() and raw.stat().st_size > 0:
                 return tab, raw, synced, json.loads(found[0].read_text())
         if attempt == DOWNLOAD_ATTEMPTS:
-            raise RuntimeError("upstream --raw produced no audio" if p.returncode == 0 else f"upstream exited with {p.returncode}")
-        print(f"  Upstream failed; trying again ({attempt + 1}/{DOWNLOAD_ATTEMPTS})...", flush=True)
+            raise RuntimeError(f"Audio download failed: {why}" if why else "Audio download failed: no audio was produced"
+                               if p.returncode == 0 else f"The tab and audio downloader exited with {p.returncode}")
+        print(f"  The tab and audio downloader failed; trying again ({attempt + 1}/{DOWNLOAD_ATTEMPTS})...", flush=True)
         time.sleep(RETRY_PAUSE * attempt)
 
 
@@ -118,8 +123,8 @@ def choose_backing(candidates, meta):
 
 
 def backing_label(entry):
-    """"Backing (without Guitar)": a backing video is the mix without the instruments upstream lists as `without`. Plain "Backing"
-    when it lists none (an older upstream does not)."""
+    """"Backing (without Guitar)": a backing video is the mix without the instruments the source lists as `without`. Plain "Backing"
+    when it lists none (an older release does not)."""
     names = [n.title() for n in entry.get("without") or []]
     return f"Backing (without {', '.join(names)})" if names else "Backing"
 
@@ -204,7 +209,7 @@ def main():
 
     work = Path("work")
     work.mkdir(exist_ok=True)
-    # Upstream does the song metadata, video points, tab, untrimmed audio and synced file in one run (sync.py --raw).
+    # The downloader does the song metadata, video points, tab, untrimmed audio and synced file in one run (sync.py --raw).
     step(1, "Fetching the tab and audio (song metadata, video points, tab, audio)...")
     try:
         gp_path, mix_path, synced_by_upstream, data = run_upstream_raw(song_id, work)
