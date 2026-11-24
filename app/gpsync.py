@@ -434,13 +434,32 @@ def view(job):
 # --------------------------------------------------------------------------- #
 # Runner (detached; one sync at a time)
 # --------------------------------------------------------------------------- #
+def proxy_env(environ=None):
+    """Environment variables that send a job's YouTube traffic through YOUTUBE_PROXY_URL (a residential proxy, since YouTube
+    blocks datacenter addresses). yt-dlp and requests read HTTP(S)_PROXY. The tab source and StemDeck are listed in NO_PROXY so
+    they are reached directly. Empty when no proxy is set."""
+    environ = os.environ if environ is None else environ
+    proxy = environ.get("YOUTUBE_PROXY_URL", "").strip()
+    if not proxy:
+        return {}
+    direct = ["localhost", "127.0.0.1", "::1"]
+    try:
+        direct.append(urlparse(sources.SOURCES["default"].base_url).hostname or "")
+    except sources.SourceError:
+        pass
+    direct.append(urlparse(environ.get("STEMDECK_URL", "") or "http://stemdeck:8000").hostname or "")
+    no_proxy = ",".join(dict.fromkeys(h for h in direct if h))
+    return {"HTTP_PROXY": proxy, "HTTPS_PROXY": proxy, "http_proxy": proxy, "https_proxy": proxy,
+            "NO_PROXY": no_proxy, "no_proxy": no_proxy}
+
+
 def run(job_id):
     job = read_job(job_id)
     if not job:
         return
     d = JOBS / job_id
     # The job (yt-dlp, ffmpeg, upstream code) has no use for the access token.
-    env = {**{k: v for k, v in os.environ.items() if k != "AUTH_TOKEN"}, "PYTHONUNBUFFERED": "1"}
+    env = {**{k: v for k, v in os.environ.items() if k != "AUTH_TOKEN"}, "PYTHONUNBUFFERED": "1", **proxy_env()}
     with open(DATA / "sync.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # queue behind any running sync
         job.update(status="running", started=now())

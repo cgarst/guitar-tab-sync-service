@@ -36,6 +36,11 @@ PUBLIC_BASE_URL=http://localhost:8080
 # GPYTSYNC_REPO=cgarst/guitar-pro-youtube-sync
 # GPYTSYNC_BRANCH=raw-flag
 
+# Send YouTube downloads through a proxy. YouTube blocks datacenter addresses ("Sign in to confirm you're not a bot"), so
+# point this at a proxy on a home connection, e.g. http://user:password@home.example:18888. The tab source and StemDeck are
+# reached directly. Treat the value as a secret.
+# YOUTUBE_PROXY_URL=
+
 # Set to 0 to skip stems: the bundled StemDeck container is not started.
 # STEMDECK_ENABLED=1
 

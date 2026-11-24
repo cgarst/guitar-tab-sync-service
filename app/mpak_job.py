@@ -101,6 +101,8 @@ def run_upstream_raw(song_id, work):
             if tab.is_file() and raw.is_file() and raw.stat().st_size > 0:
                 return tab, raw, synced, json.loads(found[0].read_text())
         if attempt == DOWNLOAD_ATTEMPTS:
+            if why and "not a bot" in why and not os.environ.get("YOUTUBE_PROXY_URL"):
+                why += " (YouTube blocks datacenter addresses; set YOUTUBE_PROXY_URL to use a home proxy)"
             raise RuntimeError(f"Audio download failed: {why}" if why else "Audio download failed: no audio was produced"
                                if p.returncode == 0 else f"The tab and audio downloader exited with {p.returncode}")
         print(f"  The tab and audio downloader failed; trying again ({attempt + 1}/{DOWNLOAD_ATTEMPTS})...", flush=True)
