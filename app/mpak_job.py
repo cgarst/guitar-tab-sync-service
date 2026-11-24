@@ -8,6 +8,7 @@ the plain tab, the untrimmed YouTube audio and the source's own bar times. It ru
 
 It makes every output that applies: the Guitar Pro file, a pack of the full band and the source's backing video (two
 recordings, each with its own sync), and a pack with the six stems. A missing StemDeck or backing video skips that pack.
+With `--resume` (the "Retry stems" button) it runs steps 3 and 4 again from the files a failed separation left in work/.
 Steps (printed as [n/4]; parsed by gpsync.py):
     1 tab and audio (song metadata, video points, tab, audio)   2 backing audio   3 stems (StemDeck)   4 pack
 The shared sync lock (inherited as GPSYNC_LOCK_FD) is released after step 2: StemDeck queues its own work, and the
@@ -179,6 +180,52 @@ def separate(stemdeck, mix_path, work, deadline):
     return stems
 
 
+def build_pack(out, *, title, artist, gp_path, mix_path, stems, video_id, sync_bytes, backing=None):
+    manifest = mpak.build_manifest(title=title, artist=artist, score_path=gp_path, mix_path=mix_path, stems=stems,
+                                   video_id=video_id, sync_bytes=sync_bytes, origin=score_origin(), backing=backing)
+    mpak.write_mpak(out, manifest, sync_bytes, gp_path, mix_path, stems, backing=backing)
+
+
+RESUME = "resume.json"   # work/resume.json: what "Retry stems" needs when the separation failed
+
+
+def save_resume(work, **state):
+    """Keep the downloaded audio and tab so the separation and packing can be run again without downloading anything."""
+    (work / RESUME).write_text(json.dumps(state))
+
+
+def resume_stems(deadline):
+    """`--resume`: steps 3 and 4 again for a job whose separation failed, from the files kept in work/. Adds the stems pack to
+    the outputs already made. A failure is a warning, as in a first run: the job keeps its other outputs and can be retried again."""
+    work = Path("work")
+    try:
+        st = json.loads((work / RESUME).read_text())
+        gp_path, mix_path = work / st["gp"], work / st["mix"]
+        if not (gp_path.is_file() and mix_path.is_file()):
+            raise OSError("missing file")
+    except (OSError, ValueError, KeyError):
+        sys.exit("ERROR: The downloaded audio is no longer there, so the stems cannot be retried. Start the song again.")
+    try:
+        stemdeck = check_stemdeck(configured_url())
+    except StemDeckError as e:
+        print(f"WARNING: stems skipped: {e}", flush=True)
+        return
+    step(3, "Separating stems in StemDeck...")
+    try:
+        stems = separate(stemdeck, mix_path, work, deadline)
+    except Exception as e:
+        print(f"WARNING: stems skipped: {e}", flush=True)
+        return
+    step(4, "Packing the stems .mpak...")
+    sync_bytes = mpak.json_bytes(mpak.build_sync(st["points"], st["video_id"], st["revision_id"]))
+    out = Path(f"{st['base']} (stems).mpak")
+    build_pack(out, title=st["title"], artist=st["artist"], gp_path=gp_path, mix_path=mix_path, stems=stems,
+               video_id=st["video_id"], sync_bytes=sync_bytes)
+    shutil.rmtree(work, ignore_errors=True)
+    print(f"Saved: {out}")
+    print("\nDone!")
+
+
 def check_stemdeck(url):
     """A ready StemDeck client, or raises StemDeckError saying why not."""
     if not url:
@@ -194,11 +241,16 @@ def check_stemdeck(url):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--song", required=True)
+    ap.add_argument("--song")
+    ap.add_argument("--resume", action="store_true", help="run the separation and packing again from the kept files")
     args = ap.parse_args()
+    deadline = float(os.environ["GPSYNC_DEADLINE"]) if os.environ.get("GPSYNC_DEADLINE") else None
+    if args.resume:
+        return resume_stems(deadline)
+    if not args.song:
+        ap.error("--song is required")
     song_id = int(args.song)
 
-    deadline = float(os.environ["GPSYNC_DEADLINE"]) if os.environ.get("GPSYNC_DEADLINE") else None
     # Stems are used whenever StemDeck is there; without it (or when it fails) that output is skipped.
     want_stems, stemdeck = True, None
     try:
@@ -260,9 +312,8 @@ def main():
     outputs = []
 
     def pack(out, stems_in, backing):
-        manifest = mpak.build_manifest(title=title, artist=artist, score_path=gp_path, mix_path=mix_path, stems=stems_in,
-                                       video_id=video_id, sync_bytes=sync_bytes, origin=score_origin(), backing=backing)
-        mpak.write_mpak(out, manifest, sync_bytes, gp_path, mix_path, stems_in, backing=backing)
+        build_pack(out, title=title, artist=artist, gp_path=gp_path, mix_path=mix_path, stems=stems_in,
+                   video_id=video_id, sync_bytes=sync_bytes, backing=backing)
         outputs.append(out)
 
     if stems:
@@ -278,7 +329,12 @@ def main():
         print(f"Saved: {gp_out}")
     if gp_out.is_file():
         outputs.append(gp_out)
-    shutil.rmtree(work, ignore_errors=True)
+    if configured_url() and not stems:
+        # The stems are missing but StemDeck is there (or was meant to be): keep what a retry needs.
+        save_resume(work, gp=gp_path.name, mix=mix_path.name, base=base, artist=artist, title=title,
+                    revision_id=revision_id, points=points, video_id=video_id)
+    else:
+        shutil.rmtree(work, ignore_errors=True)
     if not outputs:
         sys.exit("ERROR: No output file could be made.")
     for out in outputs:

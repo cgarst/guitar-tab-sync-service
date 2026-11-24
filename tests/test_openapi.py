@@ -16,7 +16,7 @@ from test_progress import HEAD, DOWNLOAD  # noqa: E402
 
 SPEC = json.loads((ROOT / "app" / "openapi.json").read_text())
 from server import ROUTES  # noqa: E402
-PAGES = {("GET", "/"), ("POST", "/get"), ("GET", "/get"), ("GET", "/job"), ("POST", "/delete"), ("POST", "/delete-all")}   # the HTML pages are not part of the API
+PAGES = {("GET", "/"), ("POST", "/get"), ("GET", "/get"), ("GET", "/job"), ("POST", "/delete"), ("POST", "/retry-stems"), ("POST", "/delete-all")}   # the HTML pages are not part of the API
 LINK = '</openapi.json>; rel="service-desc"; type="application/json"'
 SEARCH_LINK = '</opensearch.xml>; rel="search"; type="application/opensearchdescription+xml"'
 TOKEN = "s3cret-token"

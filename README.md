@@ -149,7 +149,7 @@ One job makes every output that applies. The first of `files` is the main file.
 | Better | `<name> (full band + backing).mpak` | the song has a backing video |
 | Good | `<name>_synced.gp` | always |
 
-A missing StemDeck, a missing backing video or a failed separation skips that output with a warning in the log. The job
+A missing StemDeck, a missing backing video or a failed separation skips that output with a warning in the log. When the separation fails, the job page has a Retry button on the Best row (`POST /api/job/stems?id=<job>` in the API) that separates and packs the stems again from the audio the job kept, without downloading anything. The warning includes StemDeck's own cause when it gives one (for example out of memory). The job
 fails only when nothing could be made or the YouTube audio could not be downloaded. Downloads are tried up to three
 times, because YouTube sometimes answers with HTTP 403.
 

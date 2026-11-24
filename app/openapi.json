@@ -555,6 +555,51 @@
           }
         }
       }
+    },
+    "/api/job/stems": {
+      "post": {
+        "operationId": "retryStems",
+        "summary": "Retry the stems of a finished job",
+        "description": "Separates the song's stems and packs them again, on the same job, from the audio it kept. Only for a done job whose `can_retry_stems` is true. The job is `running` meanwhile, and `done` again when it ends (poll `getJob`); its other files stay available. Returns `409` when it cannot be retried.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Cannot be retried.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -944,6 +989,10 @@
           "log": {
             "type": "string",
             "description": "Only with log=1."
+          },
+          "can_retry_stems": {
+            "type": "boolean",
+            "description": "true: the stems were not made, the audio is still kept and StemDeck is on, so `POST /api/job/stems` can try again."
           }
         }
       }

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Fake StemDeck for offline tests: tests/fake_stemdeck.py <port>. Implements only the calls app/stemdeck.py makes.
-A job is "separating" for its first two polls, then done. An upload named for song 888 ends in error."""
+A job is "separating" for its first two polls, then done. The first upload named for song 888 ends in error (a retry works)."""
 import json, sys, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 JOBS = {}
+FAILED_ONCE = set()
 
 
 class H(BaseHTTPRequestHandler):
@@ -29,7 +30,8 @@ class H(BaseHTTPRequestHandler):
         if len(parts) == 3:
             job["polls"] += 1
             if job["fail"]:
-                return self.send(200, {"status": "error", "progress": 30, "stage": "", "error": "separation blew up"})
+                return self.send(200, {"status": "error", "progress": 30, "stage": "", "error": "separation blew up",
+                                   "error_detail": "out of memory"})
             done = job["polls"] > 2
             return self.send(200, {"status": "done" if done else "separating",
                                    "progress": 100 if done else 50, "stage": "Separating"})
@@ -44,8 +46,13 @@ class H(BaseHTTPRequestHandler):
         if self.path == "/api/jobs":
             assert b'["vocals", "drums", "bass", "guitar", "piano", "other"]' in body, "full stem set not requested"
             job_id = uuid.uuid4().hex[:12]
-            JOBS[job_id] = {"polls": 0, "fail": b'filename="Fake%20Artist%20-%20Song%20888_raw.mp3"' in body}
+            fail = b'filename="Fake%20Artist%20-%20Song%20888_raw.mp3"' in body and "888" not in FAILED_ONCE
+            if fail:
+                FAILED_ONCE.add("888")
+            JOBS[job_id] = {"polls": 0, "fail": fail}
             return self.send(200, {"job_id": job_id})
+        if self.path == "/reset":   # tests: forget which uploads already failed once
+            FAILED_ONCE.clear()
         self.send(200, {})
 
     def do_DELETE(self):

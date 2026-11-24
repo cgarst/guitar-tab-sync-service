@@ -144,8 +144,12 @@ class StemDeck:
                 if status == "done":
                     return state
                 if status in FINISHED:
-                    raise StemDeckError(state.get("error") or (
-                        "StemDeck could not separate this file" if status == "error" else f"Job {status} in StemDeck"))
+                    # StemDeck's `error` is generic ("Audio processing failed"); its `error_detail` names the cause
+                    # (out of memory, disk full, ...).
+                    msg = state.get("error") or (
+                        "StemDeck could not separate this file" if status == "error" else f"Job {status} in StemDeck")
+                    detail = state.get("error_detail")
+                    raise StemDeckError(f"{msg} ({detail})" if isinstance(detail, str) and detail.strip() else msg)
             if deadline and time.monotonic() > deadline:
                 raise StemDeckError("Timed out waiting for StemDeck")
             time.sleep(self.poll_seconds)

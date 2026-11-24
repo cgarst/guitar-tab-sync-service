@@ -2,7 +2,7 @@
 """Request handlers and job runner for the Guitar Pro sync service.
 
 server.py serves HTTP and calls `dispatch(command, params, headers)` for each request. The commands (COMMANDS):
-    index | start | job | delete | delete-all | api-delete | api-create | api-list | api-job | api-file | api-search | health
+    index | start | job | delete | retry-stems | delete-all | api-delete | api-retry-stems | api-create | api-list | api-job | api-file | api-search | health
     | openapi | opensearch
 From a shell this file also runs the housekeeping and background commands:
     recover          fail jobs left unfinished by a previous container
@@ -358,9 +358,9 @@ TIERS = (  # an `all` job's outputs, worst to best: (tier, title, what it is, fi
 def skip_reasons(text):
     """Why an `all` job left an output out, from its log: {tier: reason}."""
     why = {}
-    m = re.search(r"stems skipped: ([^\n]*)", text)
+    m = re.findall(r"stems skipped: ([^\n]*)", text)
     if m:
-        why["best"] = m.group(1).strip()
+        why["best"] = m[-1].strip()   # the latest: a retry adds a newer one
     m = re.search(r"WARNING: (no backing video[^\n]*|backing audio download failed[^\n]*)", text)
     if m:
         why["better"] = m.group(1).strip().rstrip(".")
@@ -425,6 +425,7 @@ def view(job):
             else:
                 o["reason"] = why.get(tier) or "not made"
             v["outputs"].append(o)
+        v["can_retry_stems"] = can_retry_stems(job)
         if OPEN_TEMPLATE:
             v["open_url"] = (OPEN_TEMPLATE.replace("{url_raw}", file_url)
                              .replace("{url}", quote(file_url, safe="")))
@@ -481,11 +482,7 @@ def run(job_id):
                 rc, error = None, f"Timed out after {limit}s"
     text = read_log(job_id)
     info = parse_log(text)
-    out_dir = d / "out"
-    packs = sorted(out_dir.glob("*.mpak"), key=lambda p: p.name)
-    # Every output that applies, best first; the first is the main file.
-    rank = lambda p: (0 if "(stems)" in p.name else 1, p.name)
-    files = [p.name for p in sorted(packs, key=rank)] + [p.name for p in sorted(out_dir.glob("*_synced.gp"))]
+    files = output_files(d / "out")
     job["finished"] = now()
     job["name"] = info["name"] or job.get("name")
     if rc == 0 and files:
@@ -495,6 +492,59 @@ def run(job_id):
         lines = [l.strip() for l in text.splitlines() if l.strip()]
         job.update(status="failed", error=error or (lines[-1] if lines else f"exit code {rc}"))
     write_job(job)
+
+
+def output_files(out_dir):
+    """Every output that applies, best first (the first is the main file)."""
+    packs = sorted(out_dir.glob("*.mpak"), key=lambda p: p.name)
+    rank = lambda p: (0 if "(stems)" in p.name else 1, p.name)
+    return [p.name for p in sorted(packs, key=rank)] + [p.name for p in sorted(out_dir.glob("*_synced.gp"))]
+
+
+def run_stems(job_id):
+    """The detached runner for "Retry stems": the separation and packing of a done job again, from the audio it kept. It takes no
+    sync lock (nothing is downloaded). The job is done again whatever happens: its other outputs are still there, and a failed
+    separation is a warning in the log, as in the first run."""
+    job = read_job(job_id)
+    if not job:
+        return
+    d = JOBS / job_id
+    env = {**{k: v for k, v in os.environ.items() if k != "AUTH_TOKEN"}, "PYTHONUNBUFFERED": "1",
+           "GPSYNC_DEADLINE": str(time.time() + MPAK_TIMEOUT - 30)}
+    with open(d / "log.txt", "ab", buffering=0) as log:
+        log.write(b"\n--- Retrying the stems ---\n")
+        try:
+            subprocess.run([PYTHON, str(Path(__file__).resolve().with_name("mpak_job.py")), "--resume"], cwd=d / "out",
+                           stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, env=env, timeout=MPAK_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            log.write(f"WARNING: stems skipped: Timed out after {MPAK_TIMEOUT}s\n".encode())
+    files = output_files(d / "out")
+    job.update(status="done", finished=now(), files=files, file=files[0] if files else job.get("file"), error=None)
+    write_job(job)
+
+
+def can_retry_stems(job):
+    """A done job whose separation failed but whose audio is still kept, with StemDeck turned on."""
+    if job["status"] != "done" or job.get("purged") or not STEMDECK_URL:
+        return False
+    out = JOBS / job["id"] / "out"
+    return (out / "work" / "resume.json").is_file() and not any("(stems).mpak" in n for n in job.get("files") or [])
+
+
+def retry_stems(job_id):
+    """Start the stems again for a job. Returns an error message, or None when it started."""
+    with _create_lock:   # two clicks start one retry
+        job = read_job(job_id)
+        if not job:
+            return "No such job"
+        if not can_retry_stems(job):
+            return "This job's stems cannot be retried" if job["status"] == "done" else f"Job is {job['status']}"
+        job.update(status="running", started=now(), finished=None)
+        write_job(job)
+    proc = subprocess.Popen([sys.executable, os.path.abspath(__file__), "stems", job_id],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    threading.Thread(target=proc.wait, daemon=True).start()
+    return None
 
 
 def recover():
@@ -582,6 +632,13 @@ def api_delete():
     if err:
         return api_error(404 if err == "No such job" else 409, err)
     emit({"deleted": param("id")}, headers=api_headers())
+
+
+def api_retry_stems():
+    err = retry_stems(param("id"))
+    if err:
+        return api_error(404 if err == "No such job" else 409, err)
+    emit(view(read_job(param("id"))), 202, headers=api_headers())
 
 
 def api_file():
@@ -828,6 +885,14 @@ def start():
     emit("", 303, "text/plain", [f"Location: /job?id={job['id']}"])
 
 
+def retry_stems_page():
+    """The Retry button of the Best output: separate and pack again on the same job."""
+    err = retry_stems(param("id"))
+    if err and err != "No such job":
+        return page("Tab Sync Service", f'<p class="err">{esc(err)}</p><p><a href="/">Back</a></p>', status=409)
+    emit("", 303, "text/plain", [f"Location: /job?id={param('id')}"])
+
+
 def delete_page():
     """Remove a job from the list and delete its files (the Delete button)."""
     err = delete_job(param("id"))
@@ -899,6 +964,9 @@ def job_page():
             else:
                 info += f'<p class="meta">Not made: {esc(o["reason"])}</p>'
                 action = ""
+                if o["tier"] == "best" and v.get("can_retry_stems"):
+                    action = (f'<form method="post" action="/retry-stems" style="margin:0"><input type="hidden" name="id" value="{esc(job["id"])}">'
+                              '<button class="btn alt" title="Separate the stems and pack them again">Retry</button></form>')
             rows.append(f'<div class="file t-{o["tier"]}">{info}</div>{action}</div>')
         parts.append('<h2>Files</h2><div class="files">' + "".join(rows) + "</div>")
     if v["status"] == "failed":
@@ -941,7 +1009,7 @@ setTimeout(poll,3000)})();</script>"""
 
 
 COMMANDS = {
-    "index": index, "start": start, "job": job_page, "delete": delete_page, "delete-all": delete_all_page, "api-delete": api_delete,
+    "index": index, "start": start, "job": job_page, "delete": delete_page, "retry-stems": retry_stems_page, "delete-all": delete_all_page, "api-delete": api_delete, "api-retry-stems": api_retry_stems,
     "api-create": api_create, "api-list": api_list, "api-job": api_job, "api-file": api_file, "api-search": api_search,
     "health": health, "openapi": openapi, "opensearch": opensearch,
 }
@@ -968,9 +1036,9 @@ def dispatch(command, params, headers):
 
 if __name__ == "__main__":
     JOBS.mkdir(parents=True, exist_ok=True)
-    if len(sys.argv) == 3 and sys.argv[1] == "run":
-        run(sys.argv[2])
+    if len(sys.argv) == 3 and sys.argv[1] in ("run", "stems"):
+        {"run": run, "stems": run_stems}[sys.argv[1]](sys.argv[2])
     elif len(sys.argv) == 2 and sys.argv[1] in ("recover", "sweep"):
         {"recover": recover, "sweep": sweep}[sys.argv[1]]()
     else:
-        sys.exit(f"usage: {sys.argv[0]} recover | sweep | run <job-id>   (the server is server.py)")
+        sys.exit(f"usage: {sys.argv[0]} recover | sweep | run <job-id> | stems <job-id>   (the server is server.py)")

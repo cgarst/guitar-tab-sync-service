@@ -3,6 +3,7 @@
 Uses tests/fake_upstream and tests/fake_stemdeck.py. The pack is also validated with the reference tool from the public
 MusicPackSpec repository, which is cloned once into the system temp directory (needs git, node 22+, npm and network;
 the validation is skipped when any is missing)."""
+import urllib.request
 import fcntl, hashlib, json, os, shutil, socket, subprocess, sys, tempfile, time, unittest, zipfile
 from pathlib import Path
 
@@ -55,6 +56,7 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{self.port}/reset", data=b"", method="POST")).close()
 
     def env(self, **extra):
         return {**os.environ, "UPSTREAM_DIR": str(FAKE_UP), "STEMDECK_URL": f"http://127.0.0.1:{self.port}",
@@ -159,7 +161,8 @@ class MpakJob(Base):
         p, out = self.job("23063", STEMDECK_URL=f"http://127.0.0.1:{free_port()}")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("not answering", p.stdout)
-        self.assertEqual(self.names(out), ["Fake Artist - Song 23063 (full band + backing).mpak", "Fake Artist - Song 23063_synced.gp"])
+        self.assertEqual(self.names(out), ["Fake Artist - Song 23063 (full band + backing).mpak", "Fake Artist - Song 23063_synced.gp", "work"],
+                         "the audio is kept so the stems can be retried")
 
     def test_backing_is_the_one_without_the_default_track(self):
         p, out = self.job("999")
@@ -177,8 +180,30 @@ class MpakJob(Base):
     def test_a_failed_separation_keeps_the_other_outputs(self):
         p, out = self.job("888")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertIn("separation blew up", p.stdout)
-        self.assertEqual(self.names(out), ["Fake Artist - Song 888 (full band + backing).mpak", "Fake Artist - Song 888_synced.gp"])
+        self.assertIn("separation blew up (out of memory)", p.stdout, "StemDeck's error_detail names the cause")
+        self.assertEqual(self.names(out), ["Fake Artist - Song 888 (full band + backing).mpak", "Fake Artist - Song 888_synced.gp", "work"])
+        self.assertTrue((out / "work" / "resume.json").is_file(), "the audio is kept for a retry")
+
+    def test_resume_separates_and_packs_again_from_the_kept_audio(self):
+        p, out = self.job("888")
+        self.assertIn("stems skipped", p.stdout)
+        r = subprocess.run([sys.executable, str(APP / "mpak_job.py"), "--resume"], cwd=out, capture_output=True, text=True,
+                           env=self.env(), timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("[3/4]", r.stdout)
+        self.assertIn("[4/4]", r.stdout)
+        self.assertEqual(self.names(out), ["Fake Artist - Song 888 (full band + backing).mpak", "Fake Artist - Song 888 (stems).mpak",
+                                           "Fake Artist - Song 888_synced.gp"], "the stems pack is added and the temp files are gone")
+        m = json.loads(zipfile.ZipFile(out / "Fake Artist - Song 888 (stems).mpak").read("manifest.json"))
+        self.assertEqual([s["id"] for s in m["recordings"][0]["stems"]], STEMS)
+
+    def test_resume_without_the_kept_audio_says_so(self):
+        out = self.tmp / "out"
+        out.mkdir()
+        r = subprocess.run([sys.executable, str(APP / "mpak_job.py"), "--resume"], cwd=out, capture_output=True, text=True,
+                           env=self.env(), timeout=60)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no longer there", r.stdout + r.stderr)
 
     def test_audio_failure_fails_the_job(self):
         p, out = self.job("777", GPSYNC_RETRY_PAUSE="0")
@@ -253,7 +278,8 @@ class GpsyncRunner(Base):
         return json.loads((data / "jobs" / job_id / "job.json").read_text())
 
     def view(self, data, job_id, command="api-job", **extra):
-        env = {**os.environ, "DATA_DIR": str(data), "PUBLIC_BASE_URL": "http://h", "v_id": job_id, **extra}
+        env = {**os.environ, "DATA_DIR": str(data), "PUBLIC_BASE_URL": "http://h", "v_id": job_id,
+               "STEMDECK_URL": f"http://127.0.0.1:{self.port}", **extra}
         out = subprocess.run([sys.executable, str(ROOT / "tests" / "cgi_adapter.py"), command], capture_output=True, text=True, env=env).stdout
         return out.split("\n\n", 1)[-1]
 
@@ -315,6 +341,42 @@ class GpsyncRunner(Base):
         data, job_id, proc = self.run_job("23063")
         proc.wait(timeout=60)
         self.assertNotIn(">Retry<", self.view(data, job_id, "job", QUERY_STRING=f"id={job_id}"))
+
+    def test_retry_stems_on_a_done_job_whose_separation_failed(self):
+        data, job_id, proc = self.run_job("888")
+        proc.wait(timeout=60)
+        env = {**os.environ, "DATA_DIR": str(data), "PUBLIC_BASE_URL": "http://h"}
+        v = json.loads(self.view(data, job_id))
+        self.assertEqual((v["status"], v["can_retry_stems"], [(o["tier"], o["available"]) for o in v["outputs"]]),
+                         ("done", True, [("good", True), ("better", True), ("best", False)]))
+        self.assertIn("out of memory", v["outputs"][2]["reason"])
+        page = self.view(data, job_id, "job", QUERY_STRING=f"id={job_id}")
+        self.assertIn('action="/retry-stems"', page)
+        self.assertIn(f'name="id" value="{job_id}"', page)
+        # Retry: the detached runner finishes the job again with the stems pack added.
+        run = subprocess.run([sys.executable, str(ROOT / "tests" / "cgi_adapter.py"), "api-retry-stems"], capture_output=True, text=True,
+                             env={**env, "v_id": job_id, "UPSTREAM_PYTHON": sys.executable, "STEMDECK_URL": f"http://127.0.0.1:{self.port}"})
+        self.assertIn("202", run.stdout.split("\n\n")[0], run.stdout + run.stderr)
+        for _ in range(300):
+            job = self.read(data, job_id)
+            if job["status"] == "done":
+                break
+            time.sleep(0.1)
+        self.assertEqual(job["status"], "done")
+        self.assertEqual(job["files"], ["Fake Artist - Song 888 (stems).mpak", "Fake Artist - Song 888 (full band + backing).mpak",
+                                        "Fake Artist - Song 888_synced.gp"])
+        v = json.loads(self.view(data, job_id))
+        self.assertEqual([(o["tier"], o["available"]) for o in v["outputs"]], [("good", True), ("better", True), ("best", True)])
+        self.assertFalse(v["can_retry_stems"])
+        self.assertNotIn('action="/retry-stems"', self.view(data, job_id, "job", QUERY_STRING=f"id={job_id}"))
+
+    def test_no_retry_when_stems_are_off_or_the_job_is_not_done(self):
+        data, job_id, proc = self.run_job("23063")
+        proc.wait(timeout=60)
+        self.assertFalse(json.loads(self.view(data, job_id))["can_retry_stems"], "a job with stems has nothing to retry")
+        out = subprocess.run([sys.executable, str(ROOT / "tests" / "cgi_adapter.py"), "api-retry-stems"], capture_output=True, text=True,
+                             env={**os.environ, "DATA_DIR": str(data), "v_id": job_id})
+        self.assertIn("409", out.stdout.split("\n\n")[0])
 
     def test_failed_job_reports_last_log_line(self):
         data, job_id, proc = self.run_job("777", GPSYNC_RETRY_PAUSE="0")
