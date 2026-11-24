@@ -3,7 +3,7 @@
 This Docker Compose service turns a tab into the following outputs:
 
 - A Guitar Pro file (`.gp`) with synced YouTube audio.
-- A [Music Pack](https://github.com/cgarst/MusicPackSpec) (`.mpak`) with the full band and the backing track as two recordings, each with its own sync points.
+- A [Music Pack](https://cgarst.github.io/MusicPackSpec/) (`.mpak`) with the full band and the backing track as two recordings, each with its own sync points.
 - A Music Pack with the audio split into stems by [StemDeck](https://github.com/stemdeckapp/stemdeck).
 
 It runs [teaqu/guitar-pro-youtube-sync](https://github.com/teaqu/guitar-pro-youtube-sync) and offers it as a small REST API and web UI.
