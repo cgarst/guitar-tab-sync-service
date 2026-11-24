@@ -646,6 +646,9 @@ body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-
 main{max-width:680px;margin:0 auto;padding:40px 20px 64px}
 h1{font-size:1.6rem;margin:0 0 6px}
 h2{font-size:.8125rem;font-weight:600;margin:32px 0 8px;color:var(--mute)}
+.loghead{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;margin:32px 0 8px}.loghead h2{margin:0}
+button.copy{min-height:32px;padding:4px 12px;font-size:.8125rem;background:var(--surface);color:var(--fg);border-color:var(--line)}
+button.copy:hover{background:var(--hover);border-color:var(--mute)}
 h3{font-size:1rem;margin:0;font-weight:600}
 .sub,.meta{color:var(--mute);font-size:.875rem;font-variant-numeric:tabular-nums}
 .sub{margin:0}.meta{margin:2px 0 0;overflow-wrap:anywhere}
@@ -882,7 +885,8 @@ def job_page():
     if v["status"] == "failed":
         parts.append(f'<p class="err">{esc(v["error"])}</p>')
     log = read_log(job["id"]).strip()
-    parts.append(f'<h2>Log</h2><pre id="log">{esc(log) or "(no output yet)"}</pre>')
+    parts.append('<div class="loghead"><h2>Log</h2><button type="button" class="copy" id="copylog">Copy</button></div>')
+    parts.append(f'<pre id="log">{esc(log) or "(no output yet)"}</pre>')
     parts.append(f'<p class="meta">Job {esc(v["id"])} &middot; created {esc(v["created"])} &middot; '
                  f'<a href="{esc(v["status_url"])}">JSON</a></p>')
     if not active:
@@ -897,6 +901,11 @@ function log(){return document.getElementById('log')}
 function place(l,s){if(l)l.scrollTop=(s&&!s.bottom)?s.top:l.scrollHeight}
 function state(l){return{top:l.scrollTop,bottom:l.scrollTop+l.clientHeight>=l.scrollHeight-4}}
 place(log(),saved);
+live.addEventListener('click',function(e){var b=e.target.closest('#copylog');if(!b||!log())return;var t=log().textContent;
+function ok(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1500)}
+function old(){var a=document.createElement('textarea');a.value=t;a.style.position='fixed';a.style.opacity='0';document.body.appendChild(a);a.select();
+try{document.execCommand('copy')&&ok()}catch(x){}document.body.removeChild(a)}
+if(navigator.clipboard&&window.isSecureContext)navigator.clipboard.writeText(t).then(ok,old);else old()});
 live.addEventListener('scroll',function(e){if(e.target.id==='log')try{sessionStorage.setItem(k,JSON.stringify(state(e.target)))}catch(x){}},true);
 function poll(){if(live.dataset.active!=='1')return;
 fetch(location.href,{credentials:'same-origin',cache:'no-store'}).then(function(r){return r.ok?r.text():null}).then(function(t){
