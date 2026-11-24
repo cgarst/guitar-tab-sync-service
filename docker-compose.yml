@@ -1,0 +1,42 @@
+services:
+  gpsync:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${GPSYNC_PORT:-8080}:8080"
+    environment:
+      GPYTSYNC_REPO: ${GPYTSYNC_REPO:-cgarst/guitar-pro-youtube-sync}
+      GPYTSYNC_BRANCH: ${GPYTSYNC_BRANCH:-raw-flag}
+      GPYTSYNC_VERSION: ${GPYTSYNC_VERSION:-latest}
+
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:${GPSYNC_PORT:-8080}}
+
+      OPEN_LINK_TEMPLATE: ${OPEN_LINK_TEMPLATE:-}
+      OPEN_LINK_LABEL: ${OPEN_LINK_LABEL:-}
+
+      AUTH_TOKEN: ${AUTH_TOKEN:-}
+
+      FILE_TTL_MINUTES: ${FILE_TTL_MINUTES:-0}
+      JOB_TTL_MINUTES: ${JOB_TTL_MINUTES:-0}
+
+      STEMDECK_URL: ${STEMDECK_URL:-http://stemdeck:8000}
+      STEMDECK_ENABLED: ${STEMDECK_ENABLED:-1}
+      MPAK_JOB_TIMEOUT: "3600"
+    volumes:
+      - gpsync-data:/data
+
+  stemdeck:
+    scale: ${STEMDECK_ENABLED:-1}
+    image: ghcr.io/stemdeckapp/stemdeck:${STEMDECK_VERSION:-0.21.0}
+    restart: unless-stopped
+    environment:
+      STEMDECK_ALLOWED_HOSTS: stemdeck
+    volumes:
+      - stemdeck-jobs:/app/jobs
+      - stemdeck-cache:/cache
+
+volumes:
+  gpsync-data:
+  stemdeck-jobs:
+  stemdeck-cache:
