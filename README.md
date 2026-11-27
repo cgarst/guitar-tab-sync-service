@@ -28,7 +28,7 @@ PUBLIC_BASE_URL=http://localhost:8080
 # GPSYNC_PORT=8080
 
 # Pinned versions. Set either one to latest to follow new releases.
-# GPYTSYNC_VERSION=latest   (used only when GPYTSYNC_BRANCH is empty)
+# GPYTSYNC_VERSION=v1.2.2   (used only when GPYTSYNC_BRANCH is empty)
 # STEMDECK_VERSION=0.21.0
 
 # Use another tab and audio downloader repo, and/or track one of its branches instead of a release (overrides GPYTSYNC_VERSION;
