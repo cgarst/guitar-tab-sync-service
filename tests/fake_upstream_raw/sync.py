@@ -6,6 +6,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 _path = Path(__file__).resolve().parent.parent / "fake_upstream" / "sync.py"
 _spec = importlib.util.spec_from_file_location("fake_upstream_sync", _path)
@@ -27,13 +28,14 @@ def main():
     print("\n[1/5] Fetching song metadata...")
     import gen_gp
     gen_gp.generate_gp([], Path(f"{stem}.gp"))
-    download_youtube_audio(entries[0]["videoId"], Path(f"{stem}_raw.mp3"))
+    raw_stem = f"{stem}_{quote(entries[0]['videoId'], safe='')}"
+    download_youtube_audio(entries[0]["videoId"], Path(f"{raw_stem}_raw.mp3"))
     categories = {}
     for e in entries[1:]:
         categories.setdefault(e["feature"], []).append(
             {"videoId": e["videoId"], "tracks": e.get("tracks"), **({"without": e["without"]} if "without" in e else {}),
              "points": e["points"]})
-    Path(f"{stem}_sync.json").write_text(json.dumps(
+    Path(f"{raw_stem}_sync.json").write_text(json.dumps(
         {"videoId": entries[0]["videoId"], "revisionId": meta["revisionId"], "artist": meta["artist"],
          "title": meta["title"], "defaultTrack": meta.get("defaultTrack"),
          "popularTrackGuitar": meta.get("popularTrackGuitar"), "points": entries[0]["points"],

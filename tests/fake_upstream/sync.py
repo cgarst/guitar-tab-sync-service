@@ -46,9 +46,9 @@ def select_video_entry(entries, video_index=None):
 
 
 def download_youtube_audio(video_id, output_path, trim_start=0.0, cookies_browser=None):
-    if str(output_path).endswith("Song 777_raw.mp3"):
+    if "Song 777" in str(output_path) and str(output_path).endswith("_raw.mp3"):
         raise RuntimeError("HTTP Error 403")
-    if str(output_path).endswith("Song 778_raw.mp3") and not Path("flaky-failed").exists():
+    if "Song 778" in str(output_path) and str(output_path).endswith("_raw.mp3") and not Path("flaky-failed").exists():
         Path("flaky-failed").write_text("1")  # fails once, then works (YouTube's intermittent 403)
         raise RuntimeError("HTTP Error 403: Forbidden")
     Path(output_path).write_bytes(b"ID3fake-mp3-" + video_id.encode())

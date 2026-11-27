@@ -25,7 +25,7 @@ import sys
 import time
 import zipfile
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 APP = Path(__file__).resolve().parent
 UPSTREAM = Path(os.environ.get("UPSTREAM_DIR", "/opt/upstream"))
@@ -97,10 +97,15 @@ def run_upstream_raw(song_id, work):
         why = next((m.group(1) for l in reversed(seen) if (m := re.search(r"Audio download failed: (?:ERROR: )?(.*)", l))), None)
         found = sorted(work.glob("*_sync.json"))
         if p.returncode == 0 and len(found) == 1:
-            base = found[0].name[:-len("_sync.json")]
-            tab, raw, synced = (work / f"{base}{suffix}" for suffix in (".gp", "_raw.mp3", "_synced.gp"))
+            data = json.loads(found[0].read_text())
+            raw_base = found[0].name[:-len("_sync.json")]
+            vid_suffix = f"_{quote(data['videoId'], safe='')}"
+            # v1.2.2+ pairs raw audio and sync JSON by video ID; older releases use the plain tab stem.
+            base = raw_base[:-len(vid_suffix)] if raw_base.endswith(vid_suffix) else raw_base
+            tab, synced = work / f"{base}.gp", work / f"{base}_synced.gp"
+            raw = work / f"{raw_base}_raw.mp3"
             if tab.is_file() and raw.is_file() and raw.stat().st_size > 0:
-                return tab, raw, synced, json.loads(found[0].read_text())
+                return tab, raw, synced, data
         if attempt == DOWNLOAD_ATTEMPTS:
             if why and "not a bot" in why and not os.environ.get("YOUTUBE_PROXY_URL"):
                 why += " (YouTube blocks datacenter addresses; set YOUTUBE_PROXY_URL to use a home proxy)"

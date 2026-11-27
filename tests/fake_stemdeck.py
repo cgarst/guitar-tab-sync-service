@@ -46,7 +46,7 @@ class H(BaseHTTPRequestHandler):
         if self.path == "/api/jobs":
             assert b'["vocals", "drums", "bass", "guitar", "piano", "other"]' in body, "full stem set not requested"
             job_id = uuid.uuid4().hex[:12]
-            fail = b'filename="Fake%20Artist%20-%20Song%20888_raw.mp3"' in body and "888" not in FAILED_ONCE
+            fail = b'filename="Fake%20Artist%20-%20Song%20888' in body and b'_raw.mp3"' in body and "888" not in FAILED_ONCE
             if fail:
                 FAILED_ONCE.add("888")
             JOBS[job_id] = {"polls": 0, "fail": fail}
